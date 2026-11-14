@@ -1,0 +1,18 @@
+{
+  "name": "Braille Reader",
+  "short_name": "Braille Reader",
+  "description": "Scan braille, convert to readable text, and listen with voice output.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#06141d",
+  "theme_color": "#07111d",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
