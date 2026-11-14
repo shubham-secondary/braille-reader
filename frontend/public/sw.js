@@ -20,17 +20,26 @@ self.addEventListener('activate', (event) => {
 })
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return
+  const request = event.request
+
+  if (request.method !== 'GET') return
+  if (!request.url.startsWith(self.location.origin)) return
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.match(request).then((cached) => {
       if (cached) return cached
 
-      return fetch(event.request).then((response) => {
-        const responseClone = response.clone()
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone))
-        return response
-      }).catch(() => caches.match('/index.html'))
+      return fetch(request)
+        .then((response) => {
+          if (!response || response.status !== 200 || response.type !== 'basic') {
+            return response
+          }
+
+          const responseClone = response.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone))
+          return response
+        })
+        .catch(() => caches.match('/index.html'))
     }),
   )
 })
