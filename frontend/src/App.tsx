@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 type TabKey = 'scan' | 'learn' | 'history' | 'settings'
@@ -24,9 +24,9 @@ const navItems: Array<{ key: TabKey; label: string; icon: string }> = [
 ]
 
 const guidanceCards = [
-  { title: 'Alignment', detail: 'Tilt alert: 6° left', tone: 'amber' },
-  { title: 'Lighting', detail: 'Flash at 18%', tone: 'blue' },
-  { title: 'Focus', detail: 'Line edges clear', tone: 'green' },
+  { title: 'Alignment', detail: 'Keep the line centered', tone: 'amber' },
+  { title: 'Lighting', detail: 'Use flashlight in low light', tone: 'blue' },
+  { title: 'Focus', detail: 'Avoid glare and shadows', tone: 'green' },
 ]
 
 const recentResults = [
@@ -49,6 +49,13 @@ function App() {
   const [resultText, setResultText] = useState('The quick brown fox jumps over the lazy dog.')
   const [isLoading, setIsLoading] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const [cameraError, setCameraError] = useState('')
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const [alignmentHint, setAlignmentHint] = useState('Center the braille cell inside the grid')
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
 
   useEffect(() => {
     const checkHealth = async () => {
@@ -60,12 +67,24 @@ function App() {
         const data: HealthStatus = await response.json()
         setApiStatus(`${data.app} • ${data.status}`)
       } catch {
-        setApiStatus('API unavailable — start NestJS backend')
+        setApiStatus('API unavailable — start backend')
       }
     }
 
     void checkHealth()
-  }, [API_BASE])
+
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop())
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!cameraOpen) {
+      setAlignmentHint('Center the braille cell inside the grid')
+    }
+  }, [cameraOpen])
 
   const currentMode = useMemo(() => {
     switch (activeTab) {
@@ -80,27 +99,109 @@ function App() {
     }
   }, [activeTab])
 
-  const handleScan = async () => {
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+
+    setCameraOpen(false)
+  }
+
+  const openCamera = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setCameraError('Camera not supported on this browser.')
+      return
+    }
+
+    try {
+      setCameraError('')
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      })
+
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+      }
+      setCameraOpen(true)
+      setAlignmentHint('Center the braille cell inside the grid')
+    } catch {
+      setCameraError('Unable to access camera. Please allow camera permission.')
+      setCameraOpen(false)
+    }
+  }
+
+  const analyzeImage = async (imageData: string) => {
     setIsLoading(true)
+
     try {
       const response = await fetch(`${API_BASE}/api/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: 'The quick brown fox jumps over the lazy dog.' }),
+        body: JSON.stringify({ image: imageData, text: resultText }),
       })
+
+      if (!response.ok) {
+        throw new Error('Scan failed')
+      }
 
       const data: ScanResponse = await response.json()
       setResultText(data.extractedText)
-      setApiStatus(data.message)
+      setApiStatus(`${data.message} • confidence ${data.confidence.toFixed(2)}`)
     } catch {
-      setApiStatus('Scan failed. Backend connection error.')
+      setResultText('Please scan a clearer braille image or upload a better photo.')
+      setApiStatus('Scan failed. Try adjusting light or camera focus.')
     } finally {
       setIsLoading(false)
     }
   }
 
+  const capturePhoto = async () => {
+    if (!videoRef.current) return
+
+    const video = videoRef.current
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth || 1280
+    canvas.height = video.videoHeight || 720
+
+    const context = canvas.getContext('2d')
+    if (!context) return
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9)
+    setPreviewImage(dataUrl)
+    setCameraOpen(false)
+    stopCamera()
+    setAlignmentHint('Captured image sent for recognition')
+    await analyzeImage(dataUrl)
+  }
+
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const imageData = String(reader.result)
+      setPreviewImage(imageData)
+      await analyzeImage(imageData)
+    }
+    reader.readAsDataURL(file)
+  }
+
   const handleSpeak = async () => {
     setIsSpeaking(true)
+
     try {
       const response = await fetch(`${API_BASE}/api/tts`, {
         method: 'POST',
@@ -118,9 +219,18 @@ function App() {
         window.speechSynthesis.speak(utterance)
       }
     } catch {
-      setApiStatus('Speech unavailable')
+      setApiStatus('Speech is unavailable in this browser')
     } finally {
       setIsSpeaking(false)
+    }
+  }
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(resultText)
+      setApiStatus('Copied to clipboard')
+    } catch {
+      setApiStatus('Copy not supported in this browser')
     }
   }
 
@@ -164,23 +274,79 @@ function App() {
           </div>
 
           <div className="camera-stage" aria-label="Camera preview area">
-            <div className="scan-border" />
-            <div className="scan-hud scan-hud-left" />
-            <div className="scan-hud scan-hud-right" />
-            <div className="scan-overlay">
-              <span className="pulse-dot" />
-              camera stable
-            </div>
+            {cameraOpen ? (
+              <>
+                <video ref={videoRef} autoPlay playsInline muted className="camera-video" />
+                <div className="braille-grid-overlay" aria-hidden="true">
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                </div>
+                <div className="camera-overlay-hint">{alignmentHint}</div>
+              </>
+            ) : previewImage ? (
+              <img src={previewImage} alt="Braille capture preview" className="preview-image" />
+            ) : (
+              <div className="camera-placeholder">
+                <div className="scan-border" />
+                <div className="scan-hud scan-hud-left" />
+                <div className="scan-hud scan-hud-right" />
+                <div className="scan-overlay">
+                  <span className="pulse-dot" />
+                  camera ready
+                </div>
+                <div className="braille-grid-overlay" aria-hidden="true">
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                  <span className="braille-dot" />
+                </div>
+                <div className="camera-overlay-hint">{alignmentHint}</div>
+              </div>
+            )}
           </div>
 
+          {cameraError ? <div className="camera-error">{cameraError}</div> : null}
+
           <div className="action-row">
-            <button type="button" className="primary-btn" onClick={handleScan} disabled={isLoading}>
-              {isLoading ? 'Scanning...' : 'Open camera'}
-            </button>
-            <button type="button" className="secondary-btn">
-              Upload image
-            </button>
+            {cameraOpen ? (
+              <>
+                <button type="button" className="primary-btn" onClick={capturePhoto} disabled={isLoading}>
+                  {isLoading ? 'Scanning...' : 'Capture image'}
+                </button>
+                <button type="button" className="secondary-btn" onClick={stopCamera}>
+                  Close camera
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="primary-btn" onClick={openCamera} disabled={isLoading}>
+                  Open camera
+                </button>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  Upload image
+                </button>
+              </>
+            )}
           </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={handleUpload}
+          />
 
           <div className="guidance-grid">
             {guidanceCards.map((item) => (
@@ -195,7 +361,7 @@ function App() {
         <section className="result-panel">
           <div className="result-header">
             <h2>Converted text</h2>
-            <button type="button" className="ghost-btn small">
+            <button type="button" className="ghost-btn small" onClick={handleCopy}>
               Copy
             </button>
           </div>

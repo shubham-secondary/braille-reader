@@ -11,7 +11,7 @@ export class AppController {
   }
 
   @Post('scan')
-  scanBraille(@Body() body: { image?: string; text?: string }) {
+  async scanBraille(@Body() body: { image?: string; text?: string }) {
     return this.appService.scanBraille(body);
   }
 
