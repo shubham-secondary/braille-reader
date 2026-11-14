@@ -41,7 +41,7 @@ const brailleLessons = [
   { title: 'Live-reading', subtitle: 'Continuous speaking', value: 'Audio on' },
 ]
 
-const API_BASE = 'http://localhost:3001'
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('scan')
@@ -65,7 +65,7 @@ function App() {
     }
 
     void checkHealth()
-  }, [])
+  }, [API_BASE])
 
   const currentMode = useMemo(() => {
     switch (activeTab) {
@@ -86,9 +86,7 @@ function App() {
       const response = await fetch(`${API_BASE}/api/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: 'The quick brown fox jumps over the lazy dog.',
-        }),
+        body: JSON.stringify({ text: 'The quick brown fox jumps over the lazy dog.' }),
       })
 
       const data: ScanResponse = await response.json()
@@ -107,11 +105,7 @@ function App() {
       const response = await fetch(`${API_BASE}/api/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: resultText,
-          voice: 'default',
-          rate: 1.2,
-        }),
+        body: JSON.stringify({ text: resultText, voice: 'default', rate: 1.2 }),
       })
 
       const data = await response.json()
