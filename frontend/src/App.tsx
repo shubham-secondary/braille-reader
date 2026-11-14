@@ -83,7 +83,20 @@ function App() {
   useEffect(() => {
     if (!cameraOpen) {
       setAlignmentHint('Center the braille cell inside the grid')
+      if (videoRef.current) {
+        videoRef.current.srcObject = null
+      }
+      return
     }
+
+    if (!streamRef.current || !videoRef.current) {
+      return
+    }
+
+    videoRef.current.srcObject = streamRef.current
+    void videoRef.current.play().catch(() => {
+      setCameraError('Camera preview could not start. Please try again.')
+    })
   }, [cameraOpen])
 
   const currentMode = useMemo(() => {
@@ -129,10 +142,6 @@ function App() {
       })
 
       streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        await videoRef.current.play()
-      }
       setCameraOpen(true)
       setAlignmentHint('Center the braille cell inside the grid')
     } catch {
