@@ -122,9 +122,10 @@ function App() {
       const data: ScanResponse = await response.json()
       setResultText(data.extractedText)
       setApiStatus(`${data.message} • confidence ${data.confidence.toFixed(2)}`)
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
       setResultText('Scan failed. Try a clearer photo with better light.')
-      setApiStatus('Unable to read the braille image.')
+      setApiStatus(`Unable to read the braille image. (${message})`)
     } finally {
       setIsLoading(false)
     }
