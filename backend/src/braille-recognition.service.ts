@@ -58,12 +58,15 @@ export class BrailleRecognitionService {
   async recognizeBrailleFromImage(imageDataUrl: string): Promise<{ text: string; confidence: number; source: string }> {
     try {
       const buffer = this.toImageBuffer(imageDataUrl);
-      const { data, info } = await sharp(buffer)
-        .greyscale()
-        .normalize()
-        .threshold(180)
-        .raw()
-        .toBuffer({ resolveWithObject: true });
+      const processed = await this.prepareBinaryBrailleMask(buffer);
+      const { data, info } = processed
+        ? processed
+        : await sharp(buffer)
+            .greyscale()
+            .normalize()
+            .threshold(180)
+            .raw()
+            .toBuffer({ resolveWithObject: true });
 
       const bounds = this.getDarkPixelBounds(data, info.width, info.height);
       if (!bounds) {
@@ -92,6 +95,85 @@ export class BrailleRecognitionService {
       console.error('Braille recognition failed:', error);
       return { text: FALLBACK_TEXT, confidence: 0.62, source: 'image' };
     }
+  }
+
+  private async prepareBinaryBrailleMask(buffer: Buffer): Promise<{ data: Buffer; info: { width: number; height: number } } | null> {
+    try {
+      const raw = await sharp(buffer).raw().toBuffer({ resolveWithObject: true });
+      const { data, info } = raw;
+
+      if (!info.width || !info.height || info.channels < 3) {
+        return null;
+      }
+
+      const background = this.estimateBackgroundColor(data, info.width, info.height, info.channels);
+      const mask = Buffer.alloc(info.width * info.height);
+      let darkPixels = 0;
+
+      for (let y = 0; y < info.height; y++) {
+        for (let x = 0; x < info.width; x++) {
+          const index = (y * info.width + x) * info.channels;
+          const r = data[index];
+          const g = data[index + 1];
+          const b = data[index + 2];
+
+          const luminance = (r + g + b) / 3;
+          const backgroundLuminance = (background.r + background.g + background.b) / 3;
+          const difference = Math.abs(luminance - backgroundLuminance);
+          const channelDistance = Math.sqrt(
+            (r - background.r) ** 2 +
+            (g - background.g) ** 2 +
+            (b - background.b) ** 2,
+          );
+          const isBrailleDot = difference > 18 && channelDistance > 35;
+
+          if (isBrailleDot) {
+            mask[y * info.width + x] = 0;
+            darkPixels += 1;
+          } else {
+            mask[y * info.width + x] = 255;
+          }
+        }
+      }
+
+      const minimumDarkPixels = Math.max(24, Math.round((info.width * info.height) * 0.002));
+      if (darkPixels < minimumDarkPixels) {
+        return null;
+      }
+
+      return { data: mask, info: { width: info.width, height: info.height } };
+    } catch {
+      return null;
+    }
+  }
+
+  private estimateBackgroundColor(data: Buffer, width: number, height: number, channels: number): { r: number; g: number; b: number } {
+    const samples = [
+      [0, 0],
+      [width - 1, 0],
+      [0, height - 1],
+      [width - 1, height - 1],
+      [Math.floor(width / 2), 0],
+      [Math.floor(width / 2), height - 1],
+    ];
+
+    let totalR = 0;
+    let totalG = 0;
+    let totalB = 0;
+
+    for (const [x, y] of samples) {
+      const index = (y * width + x) * channels;
+      totalR += data[index];
+      totalG += data[index + 1];
+      totalB += data[index + 2];
+    }
+
+    const sampleCount = samples.length;
+    return {
+      r: Math.round(totalR / sampleCount),
+      g: Math.round(totalG / sampleCount),
+      b: Math.round(totalB / sampleCount),
+    };
   }
 
   segmentBraillePage(data: Buffer, width: number, height: number, bounds: Bounds): DotCell[] {
